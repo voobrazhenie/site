@@ -1,0 +1,92 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Gallery - Artist Portfolio</title>
+    <link rel="stylesheet" href="styles.css">
+</head>
+<body>
+    <header>
+        <div class="logo">
+            <h1>Artist Name</h1>
+        </div>
+        <nav>
+            <ul>
+                <li><a href="index.html">Home</a></li>
+                <li><a href="gallery.html" class="active">Gallery</a></li>
+                <li><a href="about.html">About</a></li>
+                <li><a href="contact.html">Contact</a></li>
+            </ul>
+        </nav>
+    </header>
+
+    <main>
+        <section class="gallery-header">
+            <h2>Gallery</h2>
+            <div class="gallery-filters">
+                <button class="filter-btn active" data-filter="all">All</button>
+                <button class="filter-btn" data-filter="paintings">Paintings</button>
+                <button class="filter-btn" data-filter="sculptures">Sculptures</button>
+                <button class="filter-btn" data-filter="digital">Digital Art</button>
+            </div>
+        </section>
+
+        <section class="gallery-grid">
+            <div class="gallery-item" data-category="paintings">
+                <img src="images/placeholder1.jpg" alt="Artwork 1">
+                <div class="item-info">
+                    <h3>Artwork Title 1</h3>
+                    <p>Acrylic on Canvas, 24" x 36", 2023</p>
+                </div>
+            </div>
+            <div class="gallery-item" data-category="paintings">
+                <img src="images/placeholder2.jpg" alt="Artwork 2">
+                <div class="item-info">
+                    <h3>Artwork Title 2</h3>
+                    <p>Oil on Canvas, 18" x 24", 2022</p>
+                </div>
+            </div>
+            <div class="gallery-item" data-category="sculptures">
+                <img src="images/placeholder3.jpg" alt="Artwork 3">
+                <div class="item-info">
+                    <h3>Artwork Title 3</h3>
+                    <p>Bronze, 12" x 8" x 6", 2023</p>
+                </div>
+            </div>
+            <div class="gallery-item" data-category="digital">
+                <img src="images/placeholder4.jpg" alt="Artwork 4">
+                <div class="item-info">
+                    <h3>Artwork Title 4</h3>
+                    <p>Digital Illustration, 2022</p>
+                </div>
+            </div>
+            <div class="gallery-item" data-category="paintings">
+                <img src="images/placeholder5.jpg" alt="Artwork 5">
+                <div class="item-info">
+                    <h3>Artwork Title 5</h3>
+                    <p>Watercolor on Paper, 16" x 20", 2021</p>
+                </div>
+            </div>
+            <div class="gallery-item" data-category="sculptures">
+                <img src="images/placeholder6.jpg" alt="Artwork 6">
+                <div class="item-info">
+                    <h3>Artwork Title 6</h3>
+                    <p>Marble, 10" x 8" x 12", 2023</p>
+                </div>
+            </div>
+        </section>
+    </main>
+
+    <footer>
+        <p>&copy; 2025 Artist Name. All rights reserved.</p>
+        <div class="social-links">
+            <a href="#" class="social-icon">Instagram</a>
+            <a href="#" class="social-icon">Twitter</a>
+            <a href="#" class="social-icon">LinkedIn</a>
+        </div>
+    </footer>
+
+    <script src="script.js"></script>
+</body>
+</html>
