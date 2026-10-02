@@ -1,0 +1,372 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover,user-scalable=no" />
+<title>FACE FIELD</title>
+<style>
+  :root{
+    --acid:#A0D02B;
+    --blue:#1B2DA4;
+    --ink:#050505;
+    --paper:#f5f5ef;
+  }
+  *{box-sizing:border-box}
+  html,body{margin:0;width:100%;height:100%;background:var(--ink);color:var(--paper);font-family:Inter,ui-sans-serif,system-ui,-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;overflow:hidden}
+  body{display:grid;grid-template-rows:auto 1fr auto}
+  header{
+    display:flex;align-items:center;justify-content:space-between;gap:12px;
+    padding:14px 16px;border-bottom:1px solid rgba(255,255,255,.14);
+    background:rgba(5,5,5,.72);backdrop-filter:blur(18px);z-index:5
+  }
+  .brand{font-weight:800;letter-spacing:.12em;font-size:13px}
+  .status{font:11px ui-monospace,SFMono-Regular,Menlo,monospace;opacity:.7;text-align:right}
+  main{position:relative;min-height:0}
+  video{position:absolute;inset:0;width:100%;height:100%;object-fit:cover;transform:scaleX(-1);opacity:.12;filter:grayscale(1) contrast(1.5)}
+  canvas{position:absolute;inset:0;width:100%;height:100%}
+  .intro{
+    position:absolute;left:50%;top:50%;transform:translate(-50%,-50%);
+    width:min(520px,calc(100% - 34px));text-align:center;z-index:4;
+    background:rgba(5,5,5,.76);border:1px solid rgba(255,255,255,.16);
+    padding:24px;border-radius:18px;backdrop-filter:blur(18px)
+  }
+  .intro h1{margin:0 0 8px;font-size:clamp(28px,8vw,54px);line-height:.88;letter-spacing:-.05em}
+  .intro p{margin:0 auto 18px;max-width:430px;opacity:.68;font-size:13px;line-height:1.5}
+  button,select,input{font:inherit}
+  button{
+    border:0;background:var(--acid);color:#0a0a0a;font-weight:800;
+    padding:12px 16px;border-radius:999px;cursor:pointer
+  }
+  button.secondary{background:#171717;color:white;border:1px solid rgba(255,255,255,.16)}
+  footer{
+    padding:10px 12px max(10px,env(safe-area-inset-bottom));
+    display:grid;gap:9px;background:rgba(5,5,5,.84);backdrop-filter:blur(18px);
+    border-top:1px solid rgba(255,255,255,.14);z-index:5
+  }
+  .modes{display:flex;gap:7px;overflow:auto;padding-bottom:2px}
+  .modes button{padding:8px 12px;font-size:11px;background:#161616;color:#ddd;border:1px solid rgba(255,255,255,.12)}
+  .modes button.active{background:var(--acid);color:#050505;border-color:transparent}
+  .controls{display:grid;grid-template-columns:repeat(4,minmax(90px,1fr));gap:8px}
+  label{font-size:9px;letter-spacing:.08em;text-transform:uppercase;opacity:.7;display:grid;gap:4px}
+  input[type=range]{width:100%;accent-color:var(--acid)}
+  .meters{
+    position:absolute;top:14px;left:14px;z-index:3;width:min(190px,45vw);
+    display:grid;gap:5px;pointer-events:none
+  }
+  .meter{display:grid;grid-template-columns:62px 1fr 28px;align-items:center;gap:6px;font:9px ui-monospace,SFMono-Regular,Menlo,monospace}
+  .bar{height:3px;background:#222;overflow:hidden}
+  .bar i{display:block;height:100%;width:0;background:var(--acid)}
+  .val{text-align:right;opacity:.6}
+  .note{
+    position:absolute;right:14px;top:14px;font:9px ui-monospace,SFMono-Regular,Menlo,monospace;
+    opacity:.4;max-width:160px;text-align:right;z-index:3
+  }
+  @media(max-width:720px){
+    .controls{grid-template-columns:1fr 1fr}
+    .note{display:none}
+  }
+</style>
+</head>
+<body>
+<header>
+  <div class="brand">FACE FIELD / 01</div>
+  <div class="status" id="status">MODEL NOT LOADED</div>
+</header>
+
+<main id="stage">
+  <video id="video" playsinline muted></video>
+  <canvas id="canvas"></canvas>
+
+  <div class="meters" id="meters"></div>
+  <div class="note">RGB CAMERA → MEDIAPIPE LANDMARKS<br>z is inferred, not raw TrueDepth</div>
+
+  <div class="intro" id="intro">
+    <h1>YOUR FACE<br>AS A SIGNAL</h1>
+    <p>
+      A browser sketch for turning facial geometry and expressions into live visual material.
+      Use the front camera, then try opening your mouth, blinking, smiling and moving closer.
+    </p>
+    <button id="startBtn">START CAMERA</button>
+  </div>
+</main>
+
+<footer>
+  <div class="modes">
+    <button class="active" data-mode="mesh">MESH</button>
+    <button data-mode="points">POINTS</button>
+    <button data-mode="echo">ECHO</button>
+    <button data-mode="rupture">RUPTURE</button>
+    <button data-mode="orbit">ORBIT</button>
+    <button id="cameraBtn" class="secondary">VIDEO: LOW</button>
+  </div>
+  <div class="controls">
+    <label>Depth gain <input id="depth" type="range" min="0" max="8" value="2.3" step=".1"></label>
+    <label>Motion <input id="motion" type="range" min="0" max="2" value=".5" step=".01"></label>
+    <label>Point size <input id="pointSize" type="range" min=".5" max="6" value="1.8" step=".1"></label>
+    <label>Trail <input id="trail" type="range" min=".02" max=".35" value=".12" step=".01"></label>
+  </div>
+</footer>
+
+<script type="module">
+import vision from "https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@0.10.22-rc.20250304";
+const { FaceLandmarker, FilesetResolver } = vision;
+
+const video = document.querySelector("#video");
+const canvas = document.querySelector("#canvas");
+const ctx = canvas.getContext("2d", { alpha:true });
+const intro = document.querySelector("#intro");
+const statusEl = document.querySelector("#status");
+const startBtn = document.querySelector("#startBtn");
+const metersEl = document.querySelector("#meters");
+
+const depthEl = document.querySelector("#depth");
+const motionEl = document.querySelector("#motion");
+const pointSizeEl = document.querySelector("#pointSize");
+const trailEl = document.querySelector("#trail");
+
+let faceLandmarker = null;
+let running = false;
+let lastVideoTime = -1;
+let mode = "mesh";
+let videoOpacity = .12;
+let lastLandmarks = null;
+let echoes = [];
+
+const expressions = ["jawOpen","mouthSmileLeft","mouthSmileRight","eyeBlinkLeft","eyeBlinkRight","browInnerUp"];
+for (const name of expressions) {
+  const row = document.createElement("div");
+  row.className = "meter";
+  row.innerHTML = `<span>${name.replace(/[A-Z]/g,m=>" "+m).replace("mouth ","").replace("eye ","")}</span><span class="bar"><i id="bar-${name}"></i></span><span class="val" id="val-${name}">0.00</span>`;
+  metersEl.appendChild(row);
+}
+
+function resize(){
+  const r = canvas.getBoundingClientRect();
+  const dpr = Math.min(devicePixelRatio || 1, 2);
+  canvas.width = Math.max(1, Math.round(r.width*dpr));
+  canvas.height = Math.max(1, Math.round(r.height*dpr));
+  ctx.setTransform(dpr,0,0,dpr,0,0);
+}
+addEventListener("resize", resize);
+resize();
+
+async function loadModel(){
+  statusEl.textContent = "LOADING MODEL…";
+  const filesetResolver = await FilesetResolver.forVisionTasks(
+    "https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@0.10.22-rc.20250304/wasm"
+  );
+  faceLandmarker = await FaceLandmarker.createFromOptions(filesetResolver,{
+    baseOptions:{
+      modelAssetPath:"https://storage.googleapis.com/mediapipe-models/face_landmarker/face_landmarker/float16/1/face_landmarker.task",
+      delegate:"GPU"
+    },
+    runningMode:"VIDEO",
+    numFaces:1,
+    outputFaceBlendshapes:true,
+    outputFacialTransformationMatrixes:true
+  });
+  statusEl.textContent = "MODEL READY";
+}
+
+async function start(){
+  startBtn.disabled = true;
+  try{
+    if(!faceLandmarker) await loadModel();
+    const stream = await navigator.mediaDevices.getUserMedia({
+      audio:false,
+      video:{facingMode:"user",width:{ideal:1280},height:{ideal:720}}
+    });
+    video.srcObject = stream;
+    await video.play();
+    intro.style.display="none";
+    running = true;
+    statusEl.textContent="TRACKING";
+    requestAnimationFrame(loop);
+  }catch(err){
+    console.error(err);
+    statusEl.textContent="CAMERA / MODEL ERROR";
+    startBtn.disabled = false;
+    startBtn.textContent="TRY AGAIN";
+  }
+}
+startBtn.addEventListener("click", start);
+
+document.querySelectorAll("[data-mode]").forEach(btn=>{
+  btn.onclick=()=>{
+    document.querySelectorAll("[data-mode]").forEach(b=>b.classList.remove("active"));
+    btn.classList.add("active");
+    mode=btn.dataset.mode;
+    echoes=[];
+  }
+});
+
+document.querySelector("#cameraBtn").onclick=(e)=>{
+  if(videoOpacity<.2){videoOpacity=.48;e.currentTarget.textContent="VIDEO: HIGH";}
+  else if(videoOpacity<.7){videoOpacity=0;e.currentTarget.textContent="VIDEO: OFF";}
+  else{videoOpacity=.12;e.currentTarget.textContent="VIDEO: LOW";}
+  video.style.opacity=videoOpacity;
+};
+
+function getBlendshapeMap(result){
+  const map={};
+  const cats=result?.faceBlendshapes?.[0]?.categories || [];
+  for(const c of cats) map[c.categoryName]=c.score;
+  return map;
+}
+
+function updateMeters(bs){
+  for(const n of expressions){
+    const v=bs[n]||0;
+    document.querySelector("#bar-"+n).style.width=(v*100).toFixed(1)+"%";
+    document.querySelector("#val-"+n).textContent=v.toFixed(2);
+  }
+}
+
+function smoothLandmarks(src){
+  if(!lastLandmarks){lastLandmarks=src.map(p=>({...p})); return lastLandmarks;}
+  const k=.52;
+  for(let i=0;i<src.length;i++){
+    const a=lastLandmarks[i], b=src[i];
+    a.x += (b.x-a.x)*k;
+    a.y += (b.y-a.y)*k;
+    a.z += (b.z-a.z)*k;
+  }
+  return lastLandmarks;
+}
+
+function project(p,w,h,bs,time,index){
+  // mirror x so geometry sits on mirrored selfie preview
+  let x=(1-p.x)*w;
+  let y=p.y*h;
+  const z=p.z*Number(depthEl.value);
+  const motion=Number(motionEl.value);
+
+  const cx=w*.5, cy=h*.5;
+  const jaw=bs.jawOpen||0;
+  const smile=((bs.mouthSmileLeft||0)+(bs.mouthSmileRight||0))*.5;
+  const blink=((bs.eyeBlinkLeft||0)+(bs.eyeBlinkRight||0))*.5;
+  const brow=bs.browInnerUp||0;
+
+  if(mode==="rupture"){
+    const a=Math.atan2(y-cy,x-cx);
+    const pulse=(jaw*70 + smile*25 + Math.sin(index*.31+time*.004)*8)*motion;
+    x += Math.cos(a)*pulse + z*90;
+    y += Math.sin(a)*pulse - brow*16*Math.sin(index*.19);
+  } else if(mode==="orbit"){
+    const ang=z*1.8 + time*.0002*motion;
+    const dx=x-cx, dy=y-cy;
+    x=cx+dx*Math.cos(ang)-dy*Math.sin(ang);
+    y=cy+dx*Math.sin(ang)+dy*Math.cos(ang);
+  } else {
+    x += z*30*motion;
+    y += Math.sin(index*.25+time*.003)*z*22*motion;
+  }
+
+  // Expressions become a small global visual "breathing" response.
+  const s=1 + jaw*.055*motion + blink*.02;
+  x=cx+(x-cx)*s;
+  y=cy+(y-cy)*s;
+  return {x,y,z};
+}
+
+function drawFace(lm,bs,t){
+  const w=canvas.clientWidth,h=canvas.clientHeight;
+  const alpha=Number(trailEl.value);
+  ctx.fillStyle=`rgba(5,5,5,${alpha})`;
+  ctx.fillRect(0,0,w,h);
+
+  const pts=lm.map((p,i)=>project(p,w,h,bs,t,i));
+
+  if(mode==="echo"){
+    echoes.unshift(pts.map(p=>({...p})));
+    echoes=echoes.slice(0,10);
+    echoes.forEach((layer,j)=>{
+      const a=(1-j/echoes.length)*.25;
+      ctx.strokeStyle=`rgba(160,208,43,${a})`;
+      ctx.lineWidth=.65;
+      drawConnections(layer, 3+j%3, j*2);
+    });
+  }
+
+  if(mode==="mesh" || mode==="rupture" || mode==="orbit"){
+    ctx.strokeStyle=mode==="mesh" ? "rgba(245,245,239,.36)" : "rgba(160,208,43,.42)";
+    ctx.lineWidth=.55;
+    drawConnections(pts, mode==="mesh"?2:3, mode==="rupture"?7:0);
+  }
+
+  const base=Number(pointSizeEl.value);
+  for(let i=0;i<pts.length;i++){
+    if(mode==="mesh" && i%2) continue;
+    const p=pts[i];
+    const r=Math.max(.35,base + Math.abs(p.z)*7);
+    const accent=(i%17===0 || i%29===0);
+    ctx.beginPath();
+    ctx.arc(p.x,p.y,accent?r*1.8:r,0,Math.PI*2);
+    ctx.fillStyle=accent ? "#A0D02B" : `rgba(245,245,239,${.50+Math.min(.4,Math.abs(p.z)*3)})`;
+    ctx.fill();
+  }
+
+  // Expression halo: jaw drives radius, smile drives intensity.
+  const jaw=bs.jawOpen||0;
+  const smile=((bs.mouthSmileLeft||0)+(bs.mouthSmileRight||0))*.5;
+  ctx.beginPath();
+  ctx.arc(w*.5,h*.5,Math.min(w,h)*(.16+jaw*.11),0,Math.PI*2);
+  ctx.strokeStyle=`rgba(27,45,164,${.12+smile*.5})`;
+  ctx.lineWidth=1+smile*5;
+  ctx.stroke();
+}
+
+function drawConnections(pts,step=2,skip=0){
+  // Deliberately non-anatomical "signal mesh":
+  // connects nearby landmark indices into a generative woven surface.
+  ctx.beginPath();
+  for(let i=skip;i<pts.length-step;i+=step){
+    const a=pts[i], b=pts[i+step];
+    if(Math.hypot(a.x-b.x,a.y-b.y)<85){
+      ctx.moveTo(a.x,a.y);ctx.lineTo(b.x,b.y);
+    }
+  }
+  ctx.stroke();
+}
+
+function drawIdle(){
+  const w=canvas.clientWidth,h=canvas.clientHeight,t=performance.now();
+  ctx.fillStyle="rgba(5,5,5,.12)";
+  ctx.fillRect(0,0,w,h);
+  for(let i=0;i<70;i++){
+    const a=i*.52+t*.00006;
+    const rr=60+(i%18)*7;
+    const x=w*.5+Math.cos(a)*rr;
+    const y=h*.5+Math.sin(a*1.13)*rr*.78;
+    ctx.fillStyle=i%11===0?"#A0D02B":"rgba(255,255,255,.22)";
+    ctx.fillRect(x,y,1.2,1.2);
+  }
+}
+
+async function loop(){
+  if(!running) return;
+  if(video.readyState>=2 && faceLandmarker && video.currentTime!==lastVideoTime){
+    lastVideoTime=video.currentTime;
+    const t=performance.now();
+    const result=faceLandmarker.detectForVideo(video,t);
+    if(result.faceLandmarks?.length){
+      statusEl.textContent=`TRACKING / ${result.faceLandmarks[0].length} PTS`;
+      const bs=getBlendshapeMap(result);
+      updateMeters(bs);
+      const lm=smoothLandmarks(result.faceLandmarks[0]);
+      drawFace(lm,bs,t);
+    }else{
+      statusEl.textContent="SEARCHING FOR FACE";
+      drawIdle();
+    }
+  }
+  requestAnimationFrame(loop);
+}
+
+// Start with a subtle generative idle field even before camera permission.
+(function idle(){
+  if(!running){drawIdle();requestAnimationFrame(idle);}
+})();
+</script>
+</body>
+</html>
