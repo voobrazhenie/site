@@ -108,8 +108,8 @@
 </footer>
 
 <script type="module">
-import vision from "https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@0.10.22-rc.20250304";
-const { FaceLandmarker, FilesetResolver } = vision;
+let FaceLandmarker = null;
+let FilesetResolver = null;
 
 const video = document.querySelector("#video");
 const canvas = document.querySelector("#canvas");
@@ -151,42 +151,75 @@ addEventListener("resize", resize);
 resize();
 
 async function loadModel(){
-  statusEl.textContent = "LOADING MODEL…";
+  statusEl.textContent = "LOADING FACE MODEL…";
+  startBtn.textContent = "LOADING MODEL…";
+
+  if(!FaceLandmarker || !FilesetResolver){
+    const mod = await import("https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@0.10.22-rc.20250304/+esm");
+    const api = mod.default || mod;
+    FaceLandmarker = mod.FaceLandmarker || api.FaceLandmarker;
+    FilesetResolver = mod.FilesetResolver || api.FilesetResolver;
+    if(!FaceLandmarker || !FilesetResolver){
+      throw new Error("MediaPipe module loaded, but FaceLandmarker API was not found.");
+    }
+  }
+
   const filesetResolver = await FilesetResolver.forVisionTasks(
     "https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@0.10.22-rc.20250304/wasm"
   );
+
+  const isiOS = /iPad|iPhone|iPod/.test(navigator.userAgent) ||
+                (navigator.platform === "MacIntel" && navigator.maxTouchPoints > 1);
+
   faceLandmarker = await FaceLandmarker.createFromOptions(filesetResolver,{
     baseOptions:{
       modelAssetPath:"https://storage.googleapis.com/mediapipe-models/face_landmarker/face_landmarker/float16/1/face_landmarker.task",
-      delegate:"GPU"
+      delegate: isiOS ? "CPU" : "GPU"
     },
     runningMode:"VIDEO",
     numFaces:1,
     outputFaceBlendshapes:true,
     outputFacialTransformationMatrixes:true
   });
-  statusEl.textContent = "MODEL READY";
+  statusEl.textContent = isiOS ? "MODEL READY / CPU" : "MODEL READY / GPU";
 }
 
 async function start(){
   startBtn.disabled = true;
+  startBtn.textContent = "REQUESTING CAMERA…";
   try{
-    if(!faceLandmarker) await loadModel();
+    if(!navigator.mediaDevices?.getUserMedia){
+      throw new Error("Camera access is not available in this browser.");
+    }
+
+    // Ask for camera access first, while we are still directly inside the user's tap.
+    statusEl.textContent = "REQUESTING CAMERA…";
     const stream = await navigator.mediaDevices.getUserMedia({
       audio:false,
       video:{facingMode:"user",width:{ideal:1280},height:{ideal:720}}
     });
+
     video.srcObject = stream;
     await video.play();
+    video.style.opacity = .48;
+    startBtn.textContent = "CAMERA OK / LOADING MODEL…";
+    statusEl.textContent = "CAMERA OK / LOADING MODEL…";
+
+    if(!faceLandmarker) await loadModel();
+
     intro.style.display="none";
+    video.style.opacity = videoOpacity;
     running = true;
     statusEl.textContent="TRACKING";
     requestAnimationFrame(loop);
   }catch(err){
     console.error(err);
-    statusEl.textContent="CAMERA / MODEL ERROR";
+    const msg = err?.message || String(err);
+    statusEl.textContent="ERROR: " + msg.slice(0,70);
     startBtn.disabled = false;
     startBtn.textContent="TRY AGAIN";
+    const p = intro.querySelector("p");
+    if(p) p.innerHTML = "Could not start camera / face tracking.<br><br><strong style='color:#A0D02B'>"+msg.replace(/[<>&]/g,s=>({"<":"&lt;",">":"&gt;","&":"&amp;"}[s]))+"</strong>";
   }
 }
 startBtn.addEventListener("click", start);
