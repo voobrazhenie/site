@@ -44,7 +44,7 @@
     border-top:1px solid rgba(255,255,255,.14);z-index:5
   }
   .modes{display:flex;gap:7px;overflow:auto;padding-bottom:2px}
-  .modes button{padding:8px 12px;font-size:11px;background:#161616;color:#ddd;border:1px solid rgba(255,255,255,.12)}
+  .modes button{padding:8px 12px;font-size:11px;background:#161616;color:#ddd;border:1px solid rgba(255,255,255,.12);white-space:nowrap}
   .modes button.active{background:var(--acid);color:#050505;border-color:transparent}
   .controls{display:grid;grid-template-columns:repeat(4,minmax(90px,1fr));gap:8px}
   label{font-size:9px;letter-spacing:.08em;text-transform:uppercase;opacity:.7;display:grid;gap:4px}
@@ -69,7 +69,7 @@
 </head>
 <body>
 <header>
-  <div class="brand">FACE FIELD / 01</div>
+  <div class="brand">FACE FIELD / 02</div>
   <div class="status" id="status">MODEL NOT LOADED</div>
 </header>
 
@@ -78,13 +78,13 @@
   <canvas id="canvas"></canvas>
 
   <div class="meters" id="meters"></div>
-  <div class="note">RGB CAMERA → MEDIAPIPE LANDMARKS<br>z is inferred, not raw TrueDepth</div>
+  <div class="note">TEXTURE MODE = LIVE VIDEO<br>projected onto tracked face mesh</div>
 
   <div class="intro" id="intro">
-    <h1>YOUR FACE<br>AS A SIGNAL</h1>
+    <h1>YOUR FACE<br>AS A SURFACE</h1>
     <p>
-      A browser sketch for turning facial geometry and expressions into live visual material.
-      Use the front camera, then try opening your mouth, blinking, smiling and moving closer.
+      This version can use the live camera image itself as a texture.
+      Try <strong>TEXTURE</strong>, then tap <strong>FREEZE</strong> to lock one frame onto your moving face.
     </p>
     <button id="startBtn">START CAMERA</button>
   </div>
@@ -92,11 +92,13 @@
 
 <footer>
   <div class="modes">
-    <button class="active" data-mode="mesh">MESH</button>
+    <button class="active" data-mode="texture">TEXTURE</button>
+    <button data-mode="mesh">MESH</button>
     <button data-mode="points">POINTS</button>
     <button data-mode="echo">ECHO</button>
     <button data-mode="rupture">RUPTURE</button>
     <button data-mode="orbit">ORBIT</button>
+    <button id="freezeBtn" class="secondary">FREEZE: OFF</button>
     <button id="cameraBtn" class="secondary">VIDEO: LOW</button>
   </div>
   <div class="controls">
@@ -110,6 +112,7 @@
 <script type="module">
 let FaceLandmarker = null;
 let FilesetResolver = null;
+let Delaunator = null;
 
 const video = document.querySelector("#video");
 const canvas = document.querySelector("#canvas");
@@ -118,6 +121,7 @@ const intro = document.querySelector("#intro");
 const statusEl = document.querySelector("#status");
 const startBtn = document.querySelector("#startBtn");
 const metersEl = document.querySelector("#meters");
+const freezeBtn = document.querySelector("#freezeBtn");
 
 const depthEl = document.querySelector("#depth");
 const motionEl = document.querySelector("#motion");
@@ -127,12 +131,26 @@ const trailEl = document.querySelector("#trail");
 let faceLandmarker = null;
 let running = false;
 let lastVideoTime = -1;
-let mode = "mesh";
+let mode = "texture";
 let videoOpacity = .12;
 let lastLandmarks = null;
 let echoes = [];
+let frozen = false;
+let textureTriangles = null;
+
+const freezeCanvas = document.createElement("canvas");
+const freezeCtx = freezeCanvas.getContext("2d", { alpha:false });
 
 const expressions = ["jawOpen","mouthSmileLeft","mouthSmileRight","eyeBlinkLeft","eyeBlinkRight","browInnerUp"];
+
+const textureIndices = [
+  10,338,297,332,284,251,389,356,454,323,361,288,397,365,379,378,400,377,152,148,176,149,150,136,172,58,132,93,234,127,162,21,54,103,67,109,
+  70,63,105,66,107,336,296,334,293,300,
+  33,160,158,133,153,144,362,385,387,263,373,380,
+  168,6,197,195,5,4,1,19,94,2,98,327,
+  61,40,37,0,267,270,291,321,314,17,84,91
+];
+const faceOval = [10,338,297,332,284,251,389,356,454,323,361,288,397,365,379,378,400,377,152,148,176,149,150,136,172,58,132,93,234,127,162,21,54,103,67,109];
 for (const name of expressions) {
   const row = document.createElement("div");
   row.className = "meter";
@@ -149,6 +167,17 @@ function resize(){
 }
 addEventListener("resize", resize);
 resize();
+
+async function ensureTextureTriangulation(rawLm){
+  if(textureTriangles) return;
+  if(!Delaunator){
+    const mod = await import("https://cdn.jsdelivr.net/npm/delaunator@5/+esm");
+    Delaunator = mod.default || mod.Delaunator || mod;
+  }
+  const pts = textureIndices.map(idx => [1 - rawLm[idx].x, rawLm[idx].y]);
+  const delaunay = Delaunator.from(pts);
+  textureTriangles = Array.from(delaunay.triangles);
+}
 
 async function loadModel(){
   statusEl.textContent = "LOADING FACE MODEL…";
@@ -202,6 +231,8 @@ async function start(){
     video.srcObject = stream;
     await video.play();
     video.style.opacity = .48;
+    freezeCanvas.width = video.videoWidth || 1280;
+    freezeCanvas.height = video.videoHeight || 720;
     startBtn.textContent = "CAMERA OK / LOADING MODEL…";
     statusEl.textContent = "CAMERA OK / LOADING MODEL…";
 
@@ -238,6 +269,19 @@ document.querySelector("#cameraBtn").onclick=(e)=>{
   else if(videoOpacity<.7){videoOpacity=0;e.currentTarget.textContent="VIDEO: OFF";}
   else{videoOpacity=.12;e.currentTarget.textContent="VIDEO: LOW";}
   video.style.opacity=videoOpacity;
+};
+
+freezeBtn.onclick=()=>{
+  if(!video.videoWidth || !video.videoHeight) return;
+  frozen = !frozen;
+  if(frozen){
+    freezeCanvas.width = video.videoWidth;
+    freezeCanvas.height = video.videoHeight;
+    freezeCtx.drawImage(video,0,0,freezeCanvas.width,freezeCanvas.height);
+    freezeBtn.textContent = "FREEZE: ON";
+  } else {
+    freezeBtn.textContent = "FREEZE: OFF";
+  }
 };
 
 function getBlendshapeMap(result){
@@ -302,36 +346,112 @@ function project(p,w,h,bs,time,index){
   return {x,y,z};
 }
 
-function drawFace(lm,bs,t){
+function drawImageTriangle(source, s0, s1, s2, d0, d1, d2){
+  const denom = s0.x*(s1.y-s2.y) + s1.x*(s2.y-s0.y) + s2.x*(s0.y-s1.y);
+  if(!isFinite(denom) || Math.abs(denom) < 0.0001) return;
+
+  const a = (d0.x*(s1.y-s2.y) + d1.x*(s2.y-s0.y) + d2.x*(s0.y-s1.y)) / denom;
+  const b = (d0.y*(s1.y-s2.y) + d1.y*(s2.y-s0.y) + d2.y*(s0.y-s1.y)) / denom;
+  const cc = (d0.x*(s2.x-s1.x) + d1.x*(s0.x-s2.x) + d2.x*(s1.x-s0.x)) / denom;
+  const d = (d0.y*(s2.x-s1.x) + d1.y*(s0.x-s2.x) + d2.y*(s1.x-s0.x)) / denom;
+  const e = (d0.x*(s1.x*s2.y-s2.x*s1.y) + d1.x*(s2.x*s0.y-s0.x*s2.y) + d2.x*(s0.x*s1.y-s1.x*s0.y)) / denom;
+  const ff = (d0.y*(s1.x*s2.y-s2.x*s1.y) + d1.y*(s2.x*s0.y-s0.x*s2.y) + d2.y*(s0.x*s1.y-s1.x*s0.y)) / denom;
+
+  ctx.save();
+  ctx.beginPath();
+  ctx.moveTo(d0.x,d0.y);
+  ctx.lineTo(d1.x,d1.y);
+  ctx.lineTo(d2.x,d2.y);
+  ctx.closePath();
+  ctx.clip();
+  ctx.transform(a,b,cc,d,e,ff);
+  ctx.drawImage(source,0,0);
+  ctx.restore();
+}
+
+function drawFaceOutline(dstPts){
+  ctx.beginPath();
+  faceOval.forEach((idx,i)=>{
+    const p = dstPts[idx];
+    if(i===0) ctx.moveTo(p.x,p.y);
+    else ctx.lineTo(p.x,p.y);
+  });
+  ctx.closePath();
+}
+
+async function drawTexturedFace(rawLm,dstPts,bs){
+  const w=canvas.clientWidth,h=canvas.clientHeight;
+  const alpha=Number(trailEl.value)*.9;
+  ctx.fillStyle=`rgba(5,5,5,${alpha})`;
+  ctx.fillRect(0,0,w,h);
+
+  const source=frozen ? freezeCanvas : video;
+  if(!(source && (source.videoWidth || source.width))) return;
+
+  await ensureTextureTriangulation(rawLm);
+  const sw=frozen ? freezeCanvas.width : video.videoWidth;
+  const sh=frozen ? freezeCanvas.height : video.videoHeight;
+
+  ctx.save();
+  drawFaceOutline(dstPts);
+  ctx.clip();
+
+  for(let i=0;i<textureTriangles.length;i+=3){
+    const ia=textureIndices[textureTriangles[i]];
+    const ib=textureIndices[textureTriangles[i+1]];
+    const ic=textureIndices[textureTriangles[i+2]];
+    const s0={x:(1-rawLm[ia].x)*sw,y:rawLm[ia].y*sh};
+    const s1={x:(1-rawLm[ib].x)*sw,y:rawLm[ib].y*sh};
+    const s2={x:(1-rawLm[ic].x)*sw,y:rawLm[ic].y*sh};
+    const d0=dstPts[ia], d1=dstPts[ib], d2=dstPts[ic];
+    const area=Math.abs((d1.x-d0.x)*(d2.y-d0.y)-(d2.x-d0.x)*(d1.y-d0.y));
+    if(area<5) continue;
+    drawImageTriangle(source,s0,s1,s2,d0,d1,d2);
+  }
+  ctx.restore();
+
+  const smile=((bs.mouthSmileLeft||0)+(bs.mouthSmileRight||0))*.5;
+  const jaw=bs.jawOpen||0;
+  ctx.strokeStyle=`rgba(245,245,239,${.12+smile*.28})`;
+  ctx.lineWidth=1;
+  drawFaceOutline(dstPts);
+  ctx.stroke();
+
+  ctx.beginPath();
+  ctx.arc(w*.5,h*.5,Math.min(w,h)*(.16+jaw*.11),0,Math.PI*2);
+  ctx.strokeStyle=`rgba(160,208,43,${.08+smile*.35})`;
+  ctx.lineWidth=1+smile*4;
+  ctx.stroke();
+}
+
+function drawSignalFace(pts,bs){
   const w=canvas.clientWidth,h=canvas.clientHeight;
   const alpha=Number(trailEl.value);
   ctx.fillStyle=`rgba(5,5,5,${alpha})`;
   ctx.fillRect(0,0,w,h);
 
-  const pts=lm.map((p,i)=>project(p,w,h,bs,t,i));
-
   if(mode==="echo"){
     echoes.unshift(pts.map(p=>({...p})));
     echoes=echoes.slice(0,10);
     echoes.forEach((layer,j)=>{
-      const a=(1-j/echoes.length)*.25;
-      ctx.strokeStyle=`rgba(160,208,43,${a})`;
+      const aa=(1-j/echoes.length)*.25;
+      ctx.strokeStyle=`rgba(160,208,43,${aa})`;
       ctx.lineWidth=.65;
-      drawConnections(layer, 3+j%3, j*2);
+      drawConnections(layer,3+j%3,j*2);
     });
   }
 
   if(mode==="mesh" || mode==="rupture" || mode==="orbit"){
     ctx.strokeStyle=mode==="mesh" ? "rgba(245,245,239,.36)" : "rgba(160,208,43,.42)";
     ctx.lineWidth=.55;
-    drawConnections(pts, mode==="mesh"?2:3, mode==="rupture"?7:0);
+    drawConnections(pts,mode==="mesh"?2:3,mode==="rupture"?7:0);
   }
 
   const base=Number(pointSizeEl.value);
   for(let i=0;i<pts.length;i++){
     if(mode==="mesh" && i%2) continue;
     const p=pts[i];
-    const r=Math.max(.35,base + Math.abs(p.z)*7);
+    const r=Math.max(.35,base+Math.abs(p.z)*7);
     const accent=(i%17===0 || i%29===0);
     ctx.beginPath();
     ctx.arc(p.x,p.y,accent?r*1.8:r,0,Math.PI*2);
@@ -339,7 +459,6 @@ function drawFace(lm,bs,t){
     ctx.fill();
   }
 
-  // Expression halo: jaw drives radius, smile drives intensity.
   const jaw=bs.jawOpen||0;
   const smile=((bs.mouthSmileLeft||0)+(bs.mouthSmileRight||0))*.5;
   ctx.beginPath();
@@ -386,8 +505,11 @@ async function loop(){
       statusEl.textContent=`TRACKING / ${result.faceLandmarks[0].length} PTS`;
       const bs=getBlendshapeMap(result);
       updateMeters(bs);
-      const lm=smoothLandmarks(result.faceLandmarks[0]);
-      drawFace(lm,bs,t);
+      const rawLm=result.faceLandmarks[0];
+      const lm=smoothLandmarks(rawLm);
+      const pts=lm.map((p,i)=>project(p,canvas.clientWidth,canvas.clientHeight,bs,t,i));
+      if(mode==="texture") await drawTexturedFace(rawLm,pts,bs);
+      else drawSignalFace(pts,bs);
     }else{
       statusEl.textContent="SEARCHING FOR FACE";
       drawIdle();
